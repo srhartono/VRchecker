@@ -10,9 +10,9 @@ Usage: ./VRchecker.pl -i <File.fastq/fastq.gz> -b <VR.fa>
 
 - Exact match only (assuming VR sequence length is 200bp)
 
-`./VRchecker.pl -i example.fastq.gz -b VR.fa -l 200`
+`./VRchecker.pl -i example.fastq.gz -b example_VR.fa -l 200`
 
 - At least 100bp of VR sequence match:
   
-`./VRchecker.pl -i example.fastq.gz -b VR.fa -l 100`
+`./VRchecker.pl -i example.fastq.gz -b example_VR.fa -l 100`
 
