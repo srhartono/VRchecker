@@ -1,17 +1,18 @@
 ### Synopsis
 
-Usage: ./VRchecker.pl -i <File.fastq/fastq.gz> -b <VR.fa>
+Usage: ./VRchecker.pl -i <FqFile.fastq/fastq.gz> -b <VRFile.fa>
 
 -o: output dir [currrent directory]
 
--l: min continuous match length threshold in bp [100]
+-l: min continuous match length threshold in bp [200]
 
+-q: quiet, don't print anything
 
 ### Example:
 
-- Exact match only (assuming VR sequence length is 200bp)
+- Default: Exact match
 
-`./VRchecker.pl -i example.fastq.gz -b example_VR.fa -l 200`
+`./VRchecker.pl -i example.fastq.gz -b example_VR.fa`
 
 - At least 100bp of VR sequence match:
   
