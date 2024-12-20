@@ -3,6 +3,7 @@
 Usage: ./VRchecker.pl -i <File.fastq/fastq.gz> -b <VR.fa>
 
 -o: output dir [currrent directory]
+
 -l: min continuous match length threshold in bp [100]
 
 
