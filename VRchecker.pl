@@ -107,24 +107,17 @@ Parameters:$N
 
 ",$opt_q);
 LOG($outLog, "\n#queries:\n",$opt_q);
-open (my $in0, "<", "$VRFile") or die;#checker2_queries.tsv");
-while (my $line = <$in0>) {
-	chomp($line);
-	my ($VRname, $VR);
-	if ($line =~ /^>/) {
-		($VRname) = $line =~ /^>(.+)$/;
-		$line = <$in0>; chomp($line);
-		($VR) = $line =~ /^(.+)$/;
-	}
-	else {
-		($VRname, $VR) = split("\t", $line);
-	}
-	$VR{$VR} = $VRname;
-	my $VRlen = length($VR);
-	my $VRshort = $VR;
-	($VRshort) = $VR =~ /^(.{20})/ if length($VR) >= 20;
-	print "$LCY$VRname$N\t$YW$VRshort$N... ($LGN$VRlen$N bp)\n" if not defined $opt_q;
-	LOG($outLog, "$VRname\t$VR\n",1);
+open (my $in0, "<", "$VRFile") or die "Cannot read from $VRFile: $!\n\n";
+my $fasta = new FAlite($in0);
+while (my $entry = $fasta->nextEntry) {
+	my ($VRseq) = $entry->seq;
+	my ($VRdef) = $entry->def; $VRdef =~ s/^>//;
+	$VR{$VRseq} = $VRdef;
+	my $VRlen = length($VRseq);
+	my $VRshort = $VRseq;
+	($VRshort) = $VRseq =~ /^(.{20})/ if length($VRseq) >= 20;
+	print "$LCY$VRdef$N\t$YW$VRshort$N... ($LGN$VRlen$N bp)\n" if not defined $opt_q;
+	LOG($outLog, "$VRdef\t$VRseq\n",1);
 }
 close $in0;
 my $outUnk;
