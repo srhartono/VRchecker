@@ -106,7 +106,7 @@ Parameters:$N
 -l min length threshold  : $LGN$minlen_threshold_orig$N
 
 ",$opt_q);
-LOG($outLog, "\n#queries:\n",$opt_q);
+LOG($outLog, "\n#VR sequenecs:\n",$opt_q);
 open (my $in0, "<", "$VRFile") or die "Cannot read from $VRFile: $!\n\n";
 my $fasta = new FAlite($in0);
 while (my $entry = $fasta->nextEntry) {
