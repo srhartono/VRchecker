@@ -1,6 +1,6 @@
 ### Synopsis
 
-Usage: ./VRchecker.pl -i <FqFile.fastq/fastq.gz> -b <VRFile.fa>
+Usage: `./VRchecker.pl -i <FqFile.fastq/fastq.gz> -b <VRFile.fa>`
 
 -o: output dir [currrent directory]
 
