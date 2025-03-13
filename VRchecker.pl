@@ -73,8 +73,8 @@ window = 100 - 25 =  75 bp -> search stop here coz window length (75bp) is less 
 If min match length threshold is same as VR size (e.g. 200bp), then step size/window doesn't matter
 ";
 
-die $usage unless defined $opt_i and defined $opt_b;
 die $usage . "\n" . $usage_long if defined $opt_H;
+die $usage unless defined $opt_i and defined $opt_b;
 die "fastq file -i $LCY$fqFile$N doesn't exist!\n" if not -e $fqFile;
 die "query file -b $LCY$VRFile$N doesn't exist!\n" if not -e $VRFile;
 my $step_size             = defined $opt_s ? $opt_s : 20;
@@ -162,7 +162,6 @@ while (my $line = <$inFastQ>) {
 	my $totalbc = 0;
 	my @bc;
 	my @bcseq;
-	#print "foreach\n" if ($read_name eq "\@6acb2984-5480-415b-96db-da1208fa1a0d");
 	foreach my $VRorig (sort keys %VR) {
 		my $minlen = length($VRorig);
 		my $init = 0;
