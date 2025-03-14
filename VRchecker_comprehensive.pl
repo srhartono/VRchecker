@@ -384,7 +384,7 @@ sub seed_checker {
 			}
 		}
 		else {
-			print $out0 "$temp->{read_name}\t$temp->{beg}\t$temp->{end}\t$temp->{bestscore}\t$temp->{bestVRname}\t0;0;$temp->{bestlength}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{VRseqbeg}$LCY$temp->{bestVRseq}$temp->{VRseqend}$N\t$temp->{read_seq}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{read_qual}\n";
+			print $out0 "$temp->{read_name}\t$temp->{beg}\t$temp->{end}\t$temp->{bestscore}\t$temp->{bestVRstrand}\t$temp->{bestVRname}\t0;0;$temp->{bestlength}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{VRseqbeg}$LCY$temp->{bestVRseq}$temp->{VRseqend}$N\t$temp->{read_seq}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{read_qual}\n";
 		}
 		print $out0b "$read_name\t$temp->{bestscore}\t$temp->{bestlength}\t$temp->{bestVRname}\t$temp->{bestVRstrand}\n";
 		LOG($outLog, "$YW$read_name$N $LGN$temp->{bestscore}$N $LGN$temp->{bestbeg}-$temp->{bestend} ($temp->{bestVRstrand})$N $LGN$temp->{bestlength}$N $LCY$temp->{bestVRname}$N\n",$opt_q);
