@@ -1,12 +1,13 @@
 #!/usr/bin/perl
 
 use strict; use warnings; use Getopt::Std; use Cwd qw(abs_path); use File::Basename qw(dirname);
-use vars qw($opt_v $opt_i $opt_b $opt_s $opt_w $opt_l $opt_o $opt_H $opt_q $opt_L $opt_t $opt_a);
-getopts("vi:b:s:w:l:o:HqL:t:a");
+use vars qw($opt_v $opt_i $opt_b $opt_s $opt_w $opt_l $opt_o $opt_H $opt_q $opt_L $opt_t $opt_a $opt_c $opt_0 $opt_A $opt_T);
+getopts("vi:b:s:w:l:o:HqL:t:aAc:0T:");
 
+my $libPath;
 BEGIN {
-   my $libPath = dirname(dirname abs_path $0) . '/';
-   push(@INC, $libPath);
+	$libPath = dirname(dirname abs_path $0) . '/VRchecker/';
+	push(@INC, $libPath);
 }
 
 use FAlite;
@@ -30,23 +31,36 @@ our $LCY    ="\e[1;36m";
 our $LRD    ="\e[1;31m";
 our $LPR    ="\e[1;35m";
 
+my $default_step_size             = 20;
+my $default_window_subtract_size  = 20;
+my $default_minlen_threshold_orig = 20;
+my $default_minlen_threshold_perc = 10;
+my $default_perc_match_threshold  = 75;
+my $default_outDir                = "./";
+my $default_clustaloFile          = "$libPath/clustalo-1.2.4-Ubuntu-x86_64";
+
 my ($fqFile, $VRFile) = ($opt_i, $opt_b);
 my $usage = "
+
 Usage: $YW$0$N -i $LCY<fqFile.fastq.gz>$N -b $LPR<VRFile.fa>$N
 
+-T: length for checking match threshold [VRlength]
 -t: percent match threshold [75]
 -o: output dir [currrent directory]
 -q: quiet, don't print anything
 
+-c: clustalo aligner
+    [default: $LGN$libPath$N/${YW}clustalo-1.2.4-Ubuntu-x86_64$N]
+
 Seeding match parameters:
 -s: step size [20]
--w: window subtract size [25]
+-w: window subtract size [20]
 -l: min continuous match length threshold [20]
 -L: min continuous match length threshold as of percent VR length [10]
 -a: continue searching all VRs for better matches (slower)
 
 - At least 20bp of VR sequence match:
-$YW$0$N -i ${LCY}example.fastq.gz$N -b ${LGN}example_VR.fa$N -l ${LPR}20$N
+$YW$0$N -i ${LCY}example.fastq.gz$N -b ${LGN}example_VR.fa$N -l ${LPR}20$N 
 
 Once seed is found in the read, then quantify the VR's matching score using ${YW}clustalo-1.2.4-Ubuntu-x86_64$N
 unless -a, then we only take first VR whose match is above threshold -t [75]
@@ -59,7 +73,7 @@ my $usage_long = "
 
 Options for quick dirty sliding-window based non-exact matching (blast takes too long)
 -s: step size [20]
--w: window subtract size [25]
+-w: window subtract size [20]
 -l: min continuous match length threshold [20]
 -L: min continuous match length threshold as of percent VR length [10]
 -a: continue searching all VRs for better matches (slower)
@@ -86,19 +100,22 @@ unless -a, then we only take first VR whose match is above threshold -t [75]
 
 ";
 
+die $usage_long if defined $opt_H;
 die $usage unless defined $opt_i and defined $opt_b;
-die $usage . "\n" . $usage_long if defined $opt_H;
 die "fastq file -i $LCY$fqFile$N doesn't exist!\n" if not -e $fqFile;
 die "query file -b $LCY$VRFile$N doesn't exist!\n" if not -e $VRFile;
-my $step_size             = defined $opt_s ? $opt_s : 20;
-my $window_subtract_size  = defined $opt_w ? $opt_w : 25;
-my $minlen_threshold_orig = defined $opt_l ? $opt_l : 20;
-my $minlen_threshold_perc = defined $opt_L ? $opt_L : 10;
-my $outDir                = defined $opt_o ? $opt_o : "./";
-my $perc_match_threshold  = defined $opt_t ? $opt_t : 75;
-my $quiet = 1 if defined $opt_q;
-#
-#" unless @ARGV;
+
+my $step_size             = defined $opt_s ? $opt_s : $default_step_size;
+my $window_subtract_size  = defined $opt_w ? $opt_w : $default_window_subtract_size;
+my $minlen_threshold_orig = defined $opt_l ? $opt_l : $default_minlen_threshold_orig;
+my $minlen_threshold_perc = defined $opt_L ? $opt_L : $default_minlen_threshold_perc;
+my $PERC_MATCH_THRESHOLD  = defined $opt_t ? $opt_t : $default_perc_match_threshold;
+my $outDir                = defined $opt_o ? $opt_o : $default_outDir;
+my $clustaloFile          = defined $opt_c ? $opt_c : $default_clustaloFile;
+my $quiet = $opt_q;
+
+die "\n\n${LRD}ERROR$N: Cannot find clustalo file $YW$clustaloFile$N anywhere!\nTry putting $libPath/clustalo-1.2.4-Ubuntu-x86_64 to \$PATH\n\n" if not -e $clustaloFile;
+
 my %VR;
 system("mkdir -p $outDir") if not -d $outDir;
 $outDir =~ s/\/+$//;
@@ -108,6 +125,8 @@ my $logFile = "$outDir/$fqFilename\_$VRFilename\_l$minlen_threshold_orig\_w$wind
 my $outFile = "$outDir/$fqFilename\_$VRFilename\_l$minlen_threshold_orig\_w$window_subtract_size\_s$step_size.comprehensive.tsv";
 my $outFileshort = "$outDir/$fqFilename\_$VRFilename\_l$minlen_threshold_orig\_w$window_subtract_size\_s$step_size.comprehensive.short.tsv";
 my $VRstatsFile = "$outDir/$fqFilename\_$VRFilename\_l$minlen_threshold_orig\_w$window_subtract_size\_s$step_size.comprehensive.stats";
+system("mkdir -p $outDir/.VRchecker_comprehensive/") if not -d "$outDir/.VRchecker_comprehensive/";
+my $clustaloutFile = "$outDir/.VRchecker_comprehensive/$fqFilename\_$VRFilename\_t$PERC_MATCH_THRESHOLD\_l$minlen_threshold_orig\_L$minlen_threshold_perc\_w$window_subtract_size\_s$step_size.comprehensive.clustalo.temp";
 open (my $outLog, ">", $logFile) or die "Can't write to $logFile: $!\n";
 my %out;
 LOG($outLog, "$LGN
@@ -118,10 +137,14 @@ Parameters:$N
 -s step size             : $LGN$step_size$N
 -w window subtract size  : $LGN$window_subtract_size$N
 -l min length threshold  : $LGN$minlen_threshold_orig$N
--t perc match threshold  : $LGN$perc_match_threshold$N
+-t perc match threshold  : $LGN$PERC_MATCH_THRESHOLD$N
+
+Added VRchecker directory $LCY$libPath$N to perl ${LCY}\@INC$N
+Clustal output temp file : $LCY$clustaloutFile$N
 
 ",$opt_q);
-LOG($outLog, "\n#VR sequenecs:\n",$opt_q);
+LOG($outLog, "\n#VR sequences:\n",$opt_q);
+
 open (my $in0, "<", "$VRFile") or die "Cannot read from $VRFile: $!\n\n";
 my $fasta = new FAlite($in0);
 while (my $entry = $fasta->nextEntry) {
@@ -139,10 +162,15 @@ while (my $entry = $fasta->nextEntry) {
    LOG($outLog, "$VRdef\t$VRseq\n",1);
 }
 close $in0;
-my $outUnk;
+if (defined $opt_0) { #debug
+	LOG($outLog, "\n" . date() . "${LGN}Debug Successful!!$N\n\n");
+	exit 0;
+}
+
 LOG($outLog, "\n# matching query sequence to fastq sequence\n",$opt_q);
 my $linecount = 0;
-my %data;
+my %data = ("total" => 0, "multiplebc" => 0);
+#$data{multiplebc} = 0 if not defined $data{multiplebc};
 my $inputFastQ = $fqFile;
 open (my $out0, ">", $outFile) or die "Failed to write to $outFile: $!\n";
 open (my $out0b, ">", $outFileshort) or die "Failed to write to $outFileshort: $!\n";
@@ -153,7 +181,8 @@ if ($inputFastQ =~ /.gz$/) {
 else {
 	open ($inFastQ, "<", "$inputFastQ") or die "Cannot read from $inputFastQ: $!\n";
 }
-print $out0 "#read_name\tmatch_start\tmatch_end\tmatch_name\tmatch_number\tmatch_strand\tmatch_seq\tread_seq\tread_qual\n";
+print $out0 "#read_name\tbeg\tend\tbestscore\tbestVRstrand\tVRname\tTOTALBC;FOUND;bestlength\tVRseq\tseqR\tVRseqbegbestVRseqVRseqend\tseqR\tseqV\tread_seq\tread_qual\n";
+#read_name\tmatch_start\tmatch_end\tmatch_name\tmatch_number\tmatch_strand\tmatch_seq\tread_seq\tread_qual\n";
 while (my $line = <$inFastQ>) {
 	chomp($line);
 	LOG($outLog, "Done $LGN$linecount$N Reads\n") if $linecount % 100 == 0 and not defined $opt_q;
@@ -172,139 +201,29 @@ while (my $line = <$inFastQ>) {
 	}
 	$line = <$inFastQ>; chomp($line);
 	my $read_qual = $line;
-	my $VRfinal = "UNKNOWN";
-	my $VRseqfinal = "";
-	my $VRstrand = ".";
-	my ($VRseqbeg, $VRseqend);
-	my ($beg, $end) = (-1,-1);
-	$data{total} ++;
-	my $totalbc = 0;
-	my @bc;
-	my $score = 0;
-	my @bcseq;
-	my $bestlength = 0;
-	#print "foreach\n" if ($read_name eq "\@6acb2984-5480-415b-96db-da1208fa1a0d");
-	my $dontuse;
-	foreach my $VRorig (sort keys %VR) {
-		my $VRname = $VR{$VRorig};
-		next if defined $dontuse->{$VRname};
-		my $minlen = length($VRorig);
-		my $init = 0;
-		my $found = 0;
-		my $VRrevorig = revcomp($VRorig);
-	   my $minlen_threshold = $minlen_threshold_orig eq 0 ? length($VRorig) : $minlen_threshold_orig;
-	   if (defined $opt_L) {
-	      $minlen_threshold = int($minlen_threshold_perc / 100 * length($VRorig)+0.5);
-	   }
-		my ($bcarr, $bcseqarr, $VRstrand2);
-		#print "   while $LGN$VR{$VRorig}$N\n" if ($read_name eq "\@6acb2984-5480-415b-96db-da1208fa1a0d");
-		while ($init == 0 or $minlen >= $minlen_threshold) {
-			next if defined $dontuse->{$VRname};
-			$init = 1;
-			my $i = -1;
-			while (1) {
-				my ($VR, $VRrev);
-				my $substr = $minlen > length($VRorig) ? length($VRorig) : $minlen;
-				if ($i == -1) {
-					($VR, $VRrev) = ($VRorig, $VRrevorig);
-				}
-				else {
-					$VR = substr($VRorig, $i, $substr);
-					$VRrev = revcomp($VR);
-				}
-				if ($read_seq =~ /($VR|$VRrev)/) {
-					my $VRhash;
-					if ($read_seq =~ /($VR)/) {
-						$VRhash->{$VRorig} = $VR{$VRorig};
-						$VRstrand = "+";
-					}
-					elsif ($read_seq =~ /($VRrev)/) {
-						$VRhash->{$VRrevorig} = $VRname;
-						$VRstrand = "-";
-					}
-					
-				   my ($VRfinal0, $VRseqfinal0, $VRstrand20, $VRseqbeg0, $VRseqend0, $beg0, $end0, $totalbc0, $bcarr0, $bcseqarr0, $score0, $bestlength0) = allmatch_check2($read_name, $read_seq, $read_qual, $VRhash);
-					$dontuse->{$VRname} = 1;
-					if ($score0 > $score) {
-					   ($VRfinal, $VRseqfinal, $VRstrand2, $VRseqbeg, $VRseqend, $beg, $end, $totalbc, $bcarr, $bcseqarr, $score, $bestlength) = ($VRfinal0, $VRseqfinal0, $VRstrand20, $VRseqbeg0, $VRseqend0, $beg0, $end0, $totalbc0, $bcarr0, $bcseqarr0, $score0, $bestlength0) = allmatch_check2($read_name, $read_seq, $read_qual, $VRhash) if $score < $score0;
-						@bc = @{$bcarr};
-						@bcseq = @{$bcseqarr};
-						$found = 1 if $score >= $perc_match_threshold;
-						$found = 2 if $score >= $perc_match_threshold and $score > 95;
-						#if ($read_name eq "\@7954960d-2c5b-4e22-95e5-0ea78e8c452e" and $VRname =~ /VR_VR\-2\-70_Variable_region_2_GCskew/ and $found eq 1) {
-						if ($found >= 1) {
-							LOG($outLog, "$YW$read_name$N $LCY$VRname$N ${LGN}GOOD$N $LGN$score$N bestlen=$LGN$bestlength$N i=$YW$i to $LGN" . ($i+$substr) . "$N minlen=$LGN$minlen$N\n");
-						}
-						else {
-							$dontuse->{$VRname} = 1;
-							LOG($outLog, "$YW$read_name$N $LCY$VRname$N ${LRD}SCORE$N $LGN$score$N bestlen=$LGN$bestlength$N i=$YW$i to $LGN" . ($i+$substr) . "$N minlen=$LGN$minlen$N\n");
-						}
-					}
-						#print "FOUND\n";
-					#}
-					last if defined $dontuse->{$VRname};
-					last if $found eq 1 and not defined $opt_a;
-					last if $found eq 2;
-				}
-				$i += $step_size;
-				last if defined $dontuse->{$VRname};
-				last if length($VRorig) < $i + $minlen;
-				last if $found eq 1 and not defined $opt_a;
-				last if $found eq 2;
-			}
-			$minlen -= $window_subtract_size;
-			if (length($VRorig) < $i + $minlen) {
-				my $lengthVRorig = length($VRorig);
-				#print "last because length VRorig ($lengthVRorig) < pos+minlen=$i+$minlen\n";
-			}
-			last if length($VRorig) < $i + $minlen;
-			last if defined $dontuse->{$VRname};
-			last if $found eq 1 and not defined $opt_a;
-			last if $found eq 2;
-		}
-		#print "  while done\n" if ($read_name eq "\@6acb2984-5480-415b-96db-da1208fa1a0d");
-		last if $found eq 1 and not defined $opt_a;
-		last if $found eq 2;
-	}
-	#LOG($outLog, "$YW$read_name$N " . scalar(keys %{$dontuse}) . "\n\n");
-	if ($VRfinal eq "UNKNOWN") {
-		$data{sample}{none} ++;
-		$VRseqfinal = join("", ("-") x length($read_seq));
-		print $out0 "$read_name\t$beg\t$end\t0\t$VRfinal\t0\t$VRstrand\t$VRseqfinal\t$read_seq\t$VRseqfinal\t$read_seq\n";
-		print $out0b "$read_name\t$score\t$bestlength\tUNKNOWN\n";
-		LOG($outLog, "$YW$read_name$N $LCY$VRfinal$N ${LRD}UNK$N\n");
-		#print "$YW$read_name$N: $LCY$VRfinal$N\n$LGN$read_seq$N\n";
-	}
-	else {
-		$VRfinal = join(";", @bc);
-		$VRseqfinal = join(";", @bcseq);
-		$data{sample}{$VRfinal} ++;
-		$data{samplebc}{$VRseqfinal} ++;
-		print $out0b "$read_name\t$score\t$bestlength\t" . join(";", @bc) . "\n";
-	}
-	#die "good\n";
+	seed_checker($read_name, $read_seq, $read_qual);
 }
 LOG($outLog, "Finished matching on $LGN$linecount$N Reads\n",$opt_q);
 close $out0;
 close $inFastQ;
 
-$data{total} = 0 if not defined $data{total};
-
-$data{multiplebc} = 0 if not defined $data{multiplebc};
-open (my $out1, ">", $VRstatsFile) or die "Cannot write to $VRstatsFile: $!\n";
-print $out1 "#total read with more than 1 match: $data{multiplebc}\n";
-print $out1 "#match_name\tmatch_perc\tmatch_count\ttotal_read\n";
+my $VRstats;
+$VRstats .= "##total read with more than 1 match: $data{multiplebc}\n";
+$VRstats .= "#match_name\tmatch_perc\tmatch_count\ttotal_read\n";
 foreach my $type (sort keys %data) {
 	next if $type eq "total";
 	next if $type !~ /^(bc1|sample|bc2)$/;
 	foreach my $val (sort keys %{$data{$type}}) {
 		my $count = $data{$type}{$val};
 		my $perc = int($count/$data{total}*1000+0.5)/10;
-		print $out1 "$val\t$perc\t$count\t$data{total}\n";
+		$VRstats .= "$val\t$perc\t$count\t$data{total}\n";
 	}
 }
-close $out1;
 
+open (my $out1, ">", $VRstatsFile) or die "Cannot write to $VRstatsFile: $!\n";
+print $out1 $VRstats;
+close $out1;
+my $md5sum = `md5sum $VRstatsFile`;
 LOG($outLog,  "
 Output:
 $LCY$outFile$N # all reads with VR match
@@ -313,233 +232,246 @@ $LCY$logFile$N # log file
 $LCY$VRstatsFile$N # stats summary
 
 From $LCY$VRstatsFile$N: 
-",$opt_q);
+$VRstats
+\n\n",$opt_q);
 
-system("cat $VRstatsFile") if not defined $opt_q;
 
-print "\n\n" if not defined $opt_q;
+LOG($outLog, "$LGN$md5sum$N\n\n");
 ### SUB ROUTINES ###
 
-sub LOG {
-   my ($outLog, $text, $STEP, $STEPCOUNT) = @_;
-	if (not defined $STEP) {
-      print $text;
-   }
-   if (defined $outLog) {
-      print $outLog $text;
-   }
+sub init_temphash {
+	my $temp;
+	$temp->{read_name} = "";
+	$temp->{read_seq} = "";
+	$temp->{read_qual} = "";
+	$temp->{VR} = "UNKNOWN";
+	$temp->{VRseq} = "UNKNOWN";
+	$temp->{bestVRname} = "UNKNOWN";
+	$temp->{bestVRseq} = "UNKNOWN";
+	$temp->{bestVRstrand} = "UNKNOWN";
+	$temp->{VRlength} = "";
+	$temp->{VRstrand} = ".";
+	$temp->{VRseqbeg} = "";
+	$temp->{VRseqend} = "";
+	$temp->{bestbeg} = -1;
+	$temp->{bestend} = -1;
+	$temp->{beg} = -1;
+	$temp->{end} = -1;
+	$temp->{total} ++;
+	@{$temp->{bcname}} = ();
+	@{$temp->{bcseq}} = ();
+	@{$temp->{bcstrand}} = ();
+	$temp->{bestscore} = 0;
+	$temp->{bestlength} = 0;
+	%{$temp->{VRchecked}} = ();
+	return($temp);
 }
-
-sub getFilename {
-   my ($fh, $type) = @_;
-   my $fh0 = $fh;
-   $fh =~ s/\/+/\//g;
-   my ($first, $last) = (0,0);
-   if ($fh =~ /^\//) {
-      $first = 1;
-      $fh =~ s/^\///;
-   }
-   if ($fh =~ /\/$/) {
-      $last = 1;
-      $fh =~ s/\/$//;
-   }
-   # Split folder and fullname
-   my (@splitname) = split("\/+", $fh);
-   my $fullname = pop(@splitname);
-   my @tempfolder = @splitname;
-   my $folder;
-   if (@tempfolder == 0) {
-      $folder = "./";
-   }
-   else {
-      $folder = join("\/", @tempfolder) . "/";
-   }
-   #$folder = "./" if $folder eq "/";
-#  print "\nFolder = $folder\nFile = $fh, fullname=$fullname\n\n";
-   # Split fullname and shortname (dot separated)
-        @splitname = split(/\./, $fullname);
-        my $shortname = $splitname[0];
-   if ($first == 1) {$folder = "/$folder";}
-   if ($last == 1) {$fullname = "$fullname/";}
-   #print "\nFh=$fh0\nFolder=$folder\nShortname=$shortname\nFullname=$fullname\n\n";
-#     print "Retunring shortname\n" if not defined $type;
-
-        return($shortname)          if not defined($type);
-        return($folder, $fullname)     if defined($type) and $type =~ /folderfull/;
-        return($folder, $shortname)    if defined($type) and $type =~ /folder/;
-        return($fullname)        if defined($type) and $type =~ /full/;
-        return($folder, $fullname, $shortname)  if defined($type) and $type =~ /all/;
-}
-
-sub revcomp {
-   my ($sequence) = @_;
-   $sequence = uc($sequence);
-   $sequence =~ tr/ATGC/TACG/;
-   $sequence = reverse($sequence);
-   return ($sequence);
-}
-
-
-
-
-sub allmatch_check2 {
-	my ($read_name, $read_seq, $read_qual, $VRhash) = @_;
-	my $VRfinal = "UNKNOWN";
-	my $VRseqfinal = "";
-	my $VRstrand = ".";
-	my ($VRseqbeg, $VRseqend);
-	my ($beg, $end) = (-1,-1);
-	my $totalbc = 0;
-	my @bc;
-	my @bcseq;
-	my %best;
-	$best{score} = -1;
-	@{$best{print}} = ();
-	my $found = 0;
-	#print scalar(keys %{$VRhash}) . "\n";
-	foreach my $VRorig (sort keys %{$VRhash}) {
-		my $VRname = $VRhash->{$VRorig};
-		my $minlen = length($VRorig);
-		my $init = 0;
-		my $VRrevorig = revcomp($VRorig);
-		my $minlen_threshold = length($VRorig); #$minlen_threshold_orig eq 0 ? length($VRorig) : $minlen_threshold_orig;
-		if (defined $opt_L) {
-			$minlen_threshold = length($VRorig); #int($minlen_threshold_perc / 100 * length($VRorig)+0.5);
+sub arrcopy {
+	my ($arr1) = @_;
+	my $arr2;
+	for (my $i = 0; $i < @{$arr1}; $i++) {
+		if ($arr1->[$i] =~ /ARRAY/) {
+			$arr2->[$i] = arrcopy($arr1->[$i])
 		}
-		my ($VR, $VRrev) = ($VRorig, $VRrevorig);
-		if ($read_seq =~ /($VR|$VRrev)/) {
-			if ($found == 0) {
-				@{$best{print}} = ();
-				delete($best{print});
-			}
-			my ($VR_seq) = $VR;
-			my $seqR = $read_seq;
-			if ($read_seq =~ /$VR/) {
-				$VR_seq = $VR;
-				$seqR = $read_seq;
-				($VRseqbeg, $VRseqend) = $read_seq =~ /^(.*)$VR(.*)$/;
-				$VRfinal = $VRhash->{$VRorig};
-				$VRseqfinal = $VR;
-				$VRstrand = "+";
-			}
-			elsif ($read_seq =~ /$VRrev/) {
-				$VR_seq = $VRrev;
-				$seqR = $read_seq;
-				($VRseqbeg, $VRseqend) = $read_seq =~ /^(.*)$VRrev(.*)$/;
-				$VRfinal = $VRhash->{$VRorig};
-				$VRseqfinal = $VRrev;
-				$VRstrand = "-";
-			}
-			$beg = length($VRseqbeg);
-			$end = length($read_seq) - length($VRseqend);
-			my $VRseqbegdot = join("", ("-") x length($VRseqbeg));
-			my $VRseqenddot = join("", ("-") x length($VRseqend));
-			#if ($totalbc == 1) {
-			push(@bc, $VRfinal);
-			push(@bcseq, $VRseqfinal);
-			$totalbc ++;
-			#	$data{sample}{$VRfinal} ++;
-			#	$data{samplebc}{$VRseqfinal} ++;
-			#}
-			if ($totalbc > 1) {
-				$data{multiplebc}{$read_name} ++;
-			}
-			#my $length = $end - $beg;
-			my $length = length($VRseqfinal);
-			#print "$LCY$VRfinal$N $LPR$VRstrand$N $LGN$best{score} $length/$length$N\n";
-			$best{score} = perc($length/length($VRorig));
-			$best{len} = $length;
-			push(@{$best{print}}, "$read_name\t$beg\t$end\t$best{score}\t$VRfinal\t$totalbc;0;$length\t$VRstrand\t$VRseqbegdot$VRseqfinal$VRseqenddot\t$seqR\t$VR_seq\t$read_seq\t$read_qual");
-			#print "$YW$read_name$N: $LCY$VRfinal$N ($beg-$end $VRstrand)\n$LGN$read_seq$N\n$LPR$VRseqbegdot$LGN$VRseqfinal$N$LPR$VRseqenddot$N\n\n";
-			#print "   i=$LGN$i$N: LCY$VRfinal$N $LGN$VRhash->{$VRorig}$N\n" if ($read_name eq "\@6acb2984-5480-415b-96db-da1208fa1a0d");
-			$found = 1;
+		elsif ($arr1->[$i] =~ /HASH/) {
+			$arr2->[$i] = hashcopy($arr1->[$i])
 		}
 		else {
-			my @strand = ("+");#, "-");
-			my @VRs = ($VR);#, $VRrev);
-			for (my $j = 0; $j < @VRs; $j++) {
-				my $VR_seq = $VRs[$j];
-
-				my $input = ">$read_name\n$read_seq\n>$VRname\n$VR_seq";
-				my $outFile = ".VRcheckertemp/$fqFilename\_$VRFilename\_l$minlen_threshold_orig.temp" if defined $opt_l;
-				   $outFile = ".VRcheckertemp/$fqFilename\_$VRFilename\_L$minlen_threshold_orig.temp" if defined $opt_L;
-				open (my $out, ">", $outFile) or die;
-				print $out "$input\n";
-				close $out;
-				my $cmd = "cat $outFile | clustalo-1.2.4-Ubuntu-x86_64 -i -";
-				#print "$cmd\n";
-				my $cmdout = `$cmd`;
-				my ($defR, $seqR, $defV, $seqV) = parse_clustalo_res($cmdout);
-				my ($matfinal,$mat,$lenfinal,$begfinal,$endfinal,$seqfinal) = count_match($defR, $seqR, $defV, $seqV, $minlen_threshold);
-				#print "$LCY$VRname$N $LPR$strand[$j]$N $LGN$matfinal $mat/$lenfinal$N\n";
-				if ($best{score} <= $matfinal) {
-					if ($best{score} < $matfinal) {
-						$best{totalbc} = 0;
-						$best{res} = ();
-						$best{print} = ();
-						$best{bc} = ();
-						$best{bcseq} = ();
-						$best{len} = 0;
-						delete($best{res});
-						delete($best{print});
-						delete($best{bc});
-						delete($best{bcseq});
-					}
-					$best{score} = $matfinal;
-					$VRfinal = $VRhash->{$VRorig};
-					$VRseqfinal = $seqfinal;
-					$VRstrand = $strand[$j];
-					($VRseqbeg) = $seqV =~ /^(.{$begfinal})/; 
-					($VRseqend) = $seqV =~ /^.{$endfinal}(.+)$/; 
-					#if (not defined $VRseqbeg) {
-					#	print "$LGN$read_name $VRname $LCY$seqV$N\nbegfinal=$begfinal\n";
-					#}
-					#if (not defined $VRseqend) {
-					#	print "$LGN$read_name $VRname $LCY$seqV$N\nendfinal=$endfinal\n";
-					#}
-					$VRseqbeg = "" if not defined $VRseqbeg;
-					$VRseqend = "" if not defined $VRseqend;
-					my $VRseqbegdot = $VRseqbeg;
-					my $VRseqenddot = $VRseqend;
-					$beg = $begfinal;
-					$end = $endfinal;
-					my $length = $lenfinal;
-					$best{len} = $length;
-					$best{totalbc} ++;
-					push(@{$best{bc}}, $VRfinal);
-					push(@{$best{bcseq}}, $VRseqfinal);
-					push(@{$best{res}}, "$VRfinal\t$VRseqfinal\t$VRstrand\t$VRseqbeg\t$VRseqend\t$beg\t$end\t$VRseqbegdot");
-					push(@{$best{print}}, "$read_name\t$beg\t$end\t$best{score}\t$VRfinal\tTOTALBC;1;$length\t$VRstrand\t$seqR\t$YW$VRseqbegdot$LCY$VRseqfinal$YW$VRseqenddot$N\t$seqR\t$seqV\t$read_seq\t$VR_seq\t$read_qual");
+			$arr2->[$i] = $arr1->[$i];
+		}
+	}
+	return($arr2);
+}
+sub hashcopy {
+	my ($hash1) = @_;
+	my $hash2;
+	foreach my $key (keys %{$hash1}) {
+		if ($hash1->{$key} =~ /ARRAY/) {
+			$hash2->{$key} = arrcopy($hash1->{$key})
+		}
+		elsif ($hash1->{$key} =~ /HASH/) {
+			$hash2->{$key} = hashcopy($hash1->{$key})
+		}
+		else {
+			$hash2->{$key} = $hash1->{$key};
+		}
+	}
+	return($hash2);
+}
+sub seed_checker {
+	my ($read_name, $read_seq, $read_qual) = @_;
+	my $temp = init_temphash();
+	$temp->{read_name} = $read_name;
+	$temp->{read_seq} = $read_seq;
+	$temp->{read_qual} = $read_qual;
+	my $last = 0;
+	$data{total} ++;
+	#print "\n$YW$read_name$N\n";
+	foreach my $VRseq (sort keys %VR) {		
+		last if $last eq 2;
+		$temp->{VRseq} = $VRseq;
+		#LOG($outLog, " $LCY$VR{$VRseq}$N\n");
+		$temp->{VRname} = $VR{$VRseq};
+		$temp->{VRlength} = length($VRseq);
+		die if defined $temp->{VRchecked}{$temp->{VRname}};
+		$temp->{found} = 0;
+		$temp->{minlen_threshold} = defined $opt_L ? int($temp->{minlen_threshold_perc} / 100 * length($VRseq)+0.5) : $minlen_threshold_orig;
+	 	$temp->{minlen_threshold} = min(length($VRseq),max(0,$temp->{minlen_threshold}));
+		for ($temp->{minlen} = $temp->{VRlength}; $temp->{minlen} >= $temp->{minlen_threshold}; $temp->{minlen} -= $window_subtract_size) {
+			last if $last eq 1;
+			#LOG($outLog, "   $temp->{minlen}\n");
+		#while ($last eq 0 and ($init == 0 or $minlen >= $temp->{minlen_threshold})) {
+			#$init = 1;
+			for (my $posbeg = 0; $posbeg <= $temp->{VRlength} - $temp->{minlen}; $posbeg += $step_size) {
+				last if $last eq 1;
+				my $posend = $posbeg + $temp->{minlen};
+				#LOG($outLog, "     $posbeg-$posend\n");
+				$temp->{VRchunk} = substr($temp->{VRseq}, $posbeg, $temp->{minlen});
+				#print "substr " . length($temp->{VRseq}) . ", $posbeg, $temp->{minlen}\n";
+				$temp->{VRstrand} = "+";
+				if (revcomp($read_seq) !~ /$temp->{VRchunk}/i and $read_seq !~ /$temp->{VRchunk}/i) {
+					next;
 				}
-				#print "$LCY$res$N\n";
-			#print $out0 "$read_name\t$beg\t$end\t$VRfinal\t$totalbc;$i;$length\t$VRstrand\t$VRseqbegdot$VRseqfinal$VRseqenddot\t$seqR\t$VR_seq\t$read_seq\t$read_qual\n";
+				#elsif (revcomp($read_seq) =~ /$temp->{VRchunk}/i) {
+				#	$temp->{VRstrand} = "-";
+				#	$temp->{VRseq} = revcomp($temp->{VRseq});
+				#}
+
+				for (my $k = 0; $k < 2; $k++) {
+					$temp->{VRseq} = revcomp($temp->{VRseq}) if $k == 1;
+					$temp->{VRstrand} = "-" if $k == 1;
+					my $prev_bestscore = $temp->{bestscore};
+					$temp = allmatch_check2($temp);
+					#LOG($outLog, "best=$temp->{bestscore} $temp->{bestVRname} beststrand=$temp->{bestVRstrand}\n");
+					if ($prev_bestscore < $temp->{bestscore}) {
+						$temp->{found} = 1 if $temp->{bestscore} >= $PERC_MATCH_THRESHOLD;
+						$temp->{found} = 2 if $temp->{bestscore} >= $PERC_MATCH_THRESHOLD	 and $temp->{bestscore} > 95;
+						if ($temp->{found} >= 1) {
+							#LOG($outLog, "- $YW$read_name$N $LCY$temp->{VRname}$N ${LGN}GOOD$N $LGN$temp->{bestscore}$N $LGN$temp->{bestVRstrand}$N bestlen=$LGN$temp->{bestlength}$N i=$LGN$posbeg-$posend$N ($LGN$temp->{minlen}$N bp) minlen=$LGN$temp->{minlen}$N\n",$opt_q);
+						}
+						else {
+							#LOG($outLog, "- $YW$read_name$N $LCY$temp->{VRname}$N ${LRD}LOWSCORE$N $LGN$temp->{bestscore}$N $LRD$temp->{bestVRstrand}$N bestlen=$LGN$temp->{bestlength}$N i=$LGN$posbeg-$posend$N ($LGN$temp->{minlen}$N bp) minlen=$LGN$temp->{minlen}$N\n",$opt_q);
+						}
+						$temp->{VRchecked}{$temp->{VRname}} = 1;
+					}
+					else {
+						#LOG($outLog, "- $YW$read_name$N $LCY$temp->{VRname}$N ${LGN}KEPT$N $LGN$temp->{bestscore}$N $LGN$temp->{bestVRstrand}$N bestlen=$LGN$temp->{bestlength}$N i=$LGN$posbeg-$posend$N ($LGN$temp->{minlen}$N bp) minlen=$LGN$temp->{minlen}$N\n",$opt_q);
+					}
+					$last = 2 if $temp->{found} eq 1 and not defined $opt_a and not defined $opt_A;
+					$last = 2 if $temp->{found} eq 2 and not defined $opt_A;
+				}
+				$temp->{VRchecked}{$temp->{VRname}} = 1;
+				$last = 1 if defined $temp->{VRchecked}{$temp->{VRname}};
+				#$last = 1 if length($VRseq) < $posbeg + $temp->{minlen};
+			}
+			#$temp->{minlen} -= $window_subtract_size;
+			#$last = 1 if length($VRseq) < $posbeg + $temp->{minlen};
+			$last = 2 if $temp->{found} eq 1 and not defined $opt_a and not defined $opt_A;
+			$last = 2 if $temp->{found} eq 2 and not defined $opt_A;
+			$last = 1 if defined $temp->{VRchecked}{$temp->{VRname}};
+		}
+		$last = 2 if $temp->{found} eq 1 and not defined $opt_a and not defined $opt_A;
+		$last = 2 if $temp->{found} eq 2 and not defined $opt_A;
+	}
+	if ($temp->{found} == 0) {#bestVRname} eq "UNKNOWN") {
+		$data{sample}{none} ++;
+		if ($temp->{bestVRname} ne "UNKNOWN") {
+			my $totalbc = @{$temp->{bcname}};
+			for (my $i = 0; $i < @{$temp->{bestprint}}; $i++) {
+				$temp->{bestprint}[$i] =~ s/\tTOTALBC;/\t$totalbc;/;
+				$temp->{bestprint}[$i] =~ s/;FOUND;/;$temp->{found};/;
+				print $out0 "$temp->{bestprint}[$i]\n";
 			}
 		}
-	}
-	if ($found ne 1) {
-		my $totalbc = $best{totalbc};
-		@bc = @{$best{bc}};
-		@bcseq = @{$best{bcseq}};
-		($VRfinal, $VRseqfinal, $VRstrand, $VRseqbeg, $VRseqend, $beg, $end) = split("\t", $best{res}[0]);
-		if ($totalbc > 1) {
-			$data{multiplebc}{$read_name} ++;
+		else {
+			print $out0 "$temp->{read_name}\t$temp->{beg}\t$temp->{end}\t$temp->{bestscore}\t$temp->{bestVRname}\t0;0;$temp->{bestlength}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{VRseqbeg}$LCY$temp->{bestVRseq}$temp->{VRseqend}$N\t$temp->{read_seq}\t$temp->{bestVRseq}\t$temp->{read_seq}\t$temp->{read_qual}\n";
 		}
-		for (my $i = 0; $i < @{$best{print}}; $i++) {
-			$best{print}[$i] =~ s/\tTOTALBC;/\t$totalbc;/;
-			print $out0 "$best{print}[$i]\n";
-		}
+		print $out0b "$read_name\t$temp->{bestscore}\t$temp->{bestlength}\t$temp->{bestVRname}\t$temp->{bestVRstrand}\n";
+		LOG($outLog, "$YW$read_name$N $LGN$temp->{bestscore}$N $LGN$temp->{bestbeg}-$temp->{bestend} ($temp->{bestVRstrand})$N $LGN$temp->{bestlength}$N $LCY$temp->{bestVRname}$N\n",$opt_q);
 	}
 	else {
-		for (my $i = 0; $i < @{$best{print}}; $i++) {
-			print $out0 "$best{print}[$i]\n";
+		$temp->{bestVRname} = join(";", @{$temp->{bcname}});
+		$temp->{bestVRseq} = join(";", @{$temp->{bcseq}});
+		$temp->{bestVRstrand} = join(";", @{$temp->{bcstrand}});
+		$temp->{bestVRmat} = join(";", @{$temp->{bcmat}});
+		$data{sample}{$temp->{bestVRname}} ++;
+		$data{samplebc}{$temp->{bestVRseq}} ++;
+		$data{samplestrand}{$temp->{bestVRstrand}} ++;
+		$data{samplemat}{$temp->{bestVRmat}} ++;
+		my $totalbc = @{$temp->{bcname}};
+
+		for (my $i = 0; $i < @{$temp->{bestprint}}; $i++) {
+			$temp->{bestprint}[$i] =~ s/\tTOTALBC;/\t$totalbc;/;
+			$temp->{bestprint}[$i] =~ s/;FOUND;/;$temp->{found};/;
+			print $out0 "$temp->{bestprint}[$i]\n";
+		}
+		print $out0b "$read_name\t$temp->{bestscore}\t$temp->{bestlength}\t$temp->{bestVRname}\t$temp->{bestVRstrand}\n";
+		LOG($outLog, "$YW$read_name$N $LGN$temp->{bestscore}$N $LGN$temp->{bestbeg}-$temp->{bestend} ($temp->{bestVRstrand})$N $LGN$temp->{bestlength}$N $LCY$temp->{bestVRname}$N\n",$opt_q);
+		if ($totalbc > 1) {
+			$data{multiplebc}{$temp->{read_name}} ++;
 		}
 	}
-	return($VRfinal, $VRseqfinal, $VRstrand, $VRseqbeg, $VRseqend, $beg, $end, $totalbc, \@bc, \@bcseq, $best{score},$best{len});
+	#foreach my $type (sort keys %data) [
+	#	foreach my $VRnamefinal (sort keys %{$data{sample}}) {
+	#		print "$VRnamefinal: $data{sample}{$VRnamefinal}\n";
+	#	}
+	#}
 }
-sub parse_clustalo_res {
-	my ($resline) = @_;
+
+sub allmatch_check2 {
+	my ($temp) = @_;
+	my ($defR, $seqR, $defV, $seqV) = run_clustalo($temp);
+	run_clustalo($temp,1) if not defined $seqR;
+	#print "$seqR\n$seqV\n";
+	die "Allmatch check2 run_clostalo seqR undef\n" if not defined $seqR;
+	my ($matfinal,$mat,$lenfinal,$begfinal,$endfinal,$seqfinal) = count_match($defR, $seqR, $defV, $seqV, $temp->{VRlength}, $temp->{minlen_threshold});
+	#LOG($outLog, "$temp->{VRname} $temp->{VRstrand}: $matfinal\n");
+	if ($temp->{bestscore} <= $matfinal) {
+		return($temp) if $temp->{bestscore} == $matfinal and $temp->{VRname} eq $temp->{bestVRname};
+		if ($temp->{bestscore} < $matfinal) {
+			$temp->{bestscore} = $matfinal;
+			@{$temp->{bestprint}} = ();
+			@{$temp->{bcname}} = ();
+			@{$temp->{bcseq}} = ();
+			@{$temp->{bcstrand}} = ();
+			@{$temp->{bcmat}} = ();
+			@{$temp->{bclength}} = ();
+		}
+		$temp->{bestVRname} = $temp->{VRname};
+		$temp->{bestVRseq} = $seqfinal;
+		$temp->{bestVRstrand} = $temp->{VRstrand};
+		$temp->{bestVRmat} = $mat;
+		($temp->{beg}, $temp->{end}) = ($begfinal, $endfinal);
+		($temp->{bestbeg}, $temp->{bestend}) = ($begfinal, $endfinal);
+		($temp->{VRseqbeg}) = $begfinal > 0 ? $seqV =~ /^(.{$begfinal})/ : "";
+		($temp->{VRseqend}) = $endfinal < length($seqV) ? $seqV =~ /^.{$endfinal}(.*)$/ : "";
+		$temp->{bestlength} = $lenfinal;
+		push(@{$temp->{bcname}}, $temp->{bestVRname});
+		push(@{$temp->{bcseq}}, $temp->{bestVRseq});
+		push(@{$temp->{bcstrand}}, $temp->{bestVRstrand});
+		push(@{$temp->{bcmat}}, $temp->{bestVRmat});
+		push(@{$temp->{bclength}}, $temp->{bestlength});
+		push(@{$temp->{bestprint}}, "$temp->{read_name}\t$temp->{beg}\t$temp->{end}\t$temp->{bestscore}\t$temp->{bestVRstrand}\t$temp->{VRname}\tTOTALBC;FOUND;$temp->{bestlength}\t$temp->{VRseq}\t$seqR\t$LPR$temp->{VRseqbeg}$LCY$temp->{bestVRseq}$LGN$temp->{VRseqend}$N\t$seqR\t$seqV\t$temp->{read_seq}\t$temp->{read_qual}");
+	}
+	return($temp);#best{score}, $best{length}, $VRfinal, $VRseqfinal, $VRseqbeg, $VRseqend, $beg, $end, $totalbc, \@bc, \@bcseq);
+}
+sub run_clustalo {
+	my ($temp, $debug) = @_;
+	my $read_name_edited = $temp->{read_name};
+		$read_name_edited =~ s/^\@//;
+	my $input = ">$read_name_edited\n$temp->{read_seq}\n>$temp->{VRname}\n$temp->{VRseq}";
+	open (my $out, ">", $clustaloutFile) or die "allmatch_check2:: Failed to write to outFile $clustaloutFile: $!\n\n";
+	print $out "$input\n";
+	close $out;
+	print "input=$input\n" if defined $debug;
+	return if defined $debug;
+	my $cmdout = `cat $clustaloutFile | $clustaloFile -i -`;
+	return(parse_clustalo($cmdout));
+}
+sub parse_clustalo {
+	my ($cmdout) = @_;
 	my $res;
-	my @line = split("\n", $resline);
+	my @line = split("\n", $cmdout);
 	my ($def, $seq);
 	my $seqcount = 0;
 	my @res;
@@ -565,7 +497,8 @@ sub parse_clustalo_res {
 }
 
 sub count_match {
-	my ($defR, $seqsR, $defV, $seqsV, $minlen_threshold) = @_;
+	my ($defR, $seqsR, $defV, $seqsV, $VRlength, $minlen_threshold) = @_;
+	my $denom_length = defined $opt_T ? $opt_T : $VRlength;
 	#print "$LCY$defR$N\n$seqsR\n$LCY$defV$N\n$seqsV\n";
 	my @seqsR = split("", $seqsR);
 	my @seqsV = split("", $seqsV);
@@ -646,19 +579,25 @@ sub count_match {
 	$lenfinal = ($endfinal-$begfinal);
 	($seqfinal) = $seqsV =~ /^.{$begfinal}(.{$lenfinal}).*$/;
 	my $mat2 = 0;
-	for (my $i = 0; $i < @mat-$minlen_threshold; $i++) {
+	for (my $i = 0; $i < @mat-$denom_length; $i++) {
 		my $currbeg = $i;
-		my $currend = $i + $minlen_threshold - 1;
+		my $currend = $i + $denom_length - 1;
 		#print "$currbeg-$currend\n" if $i == 0;
 		my @currmat = @mat[$currbeg..$currend];
-		my $currmat = perc(sum(\@currmat) / $minlen_threshold);
+		my $currmat = perc(sum(\@currmat) / $denom_length);
 		if ($currmat > $matfinal2) {
 			$mat2 = sum(\@currmat);
 			$matfinal2 = $currmat;
 			$begfinal2 = $i;
-			$endfinal2 = $i+$minlen_threshold;
+			$endfinal2 = $i+$denom_length;
 			$lenfinal2 = $endfinal2-$begfinal2;
 			($seqfinal2) = $seqsV =~ /^.{$begfinal2}(.{$lenfinal2}).*$/;
+			$seqfinal2 =~ s/([A-Z])[\-]*$/$1/;
+			$lenfinal2 = length($seqfinal2);
+			$endfinal2 = $begfinal2 + $lenfinal2;
+			$seqfinal2 =~ s/^[\-]*([A-Z])/$1/;
+			$lenfinal2 = length($seqfinal2);
+			$begfinal2 = $endfinal2 - $lenfinal2;
 		}
 	}
 	my $matfinal1 = $matfinal;
@@ -677,9 +616,9 @@ sub count_match {
 	}
 	#print "$seqsR\n$seqsV\n";
 	#print join("", @res) . "\n";
-	#print "mat=$mat, total=$total, minlen_threshold=$minlen_threshold, seqsvthres=$seqsVthres\n";
+	#print "mat=$mat, total=$total, $denom_length=$denom_length, seqsvthres=$seqsVthres\n";
 	#print "match final1=$LGN$matfinal1\%$N ($LGN$mat1$N/$LGN$lenfinal1$N) ($LCY$begfinal1-$endfinal1$N)\n";
-	#print "match final2=$LGN$matfinal2\%$N ($LGN$mat2$N/$LGN$lenfinal2$N) ($LCY$begfinal2-$endfinal2$N) minlen_threshold=$LGN$minlen_threshold$N\n";
+	#print "match final2=$LGN$matfinal2\%$N ($LGN$mat2$N/$LGN$lenfinal2$N) ($LCY$begfinal2-$endfinal2$N) $denom_length=$LGN$denom_length$N\n";
 	#print "match final=$LGN$matfinal\%$N ($LGN$mat$N/$LGN$lenfinal$N) len=$LGN$lenfinal$N ($LCY$begfinal-$endfinal$N)\n";
 	return($matfinal,$mat,$lenfinal,$begfinal,$endfinal,$seqfinal);
 }
@@ -707,5 +646,95 @@ sub sum {
 		$sum += $array->[$i];
 	}
 	return($sum);
+}
+
+sub date {
+	my ($add, $color) = @_;
+	($color = $add and undef $add) if defined $add and $add =~ /^(color=|color|col=|col|y|c)/i;
+	$add = 0 if not defined $add;
+	return ("[$YW" . getDate($add) . "$N]: ") if not defined $color;
+	return ("[" . getDate($add) . "]: ") if defined $color;
+}
+
+sub getDate {
+	my ($add) = @_;
+	$add = 0 if not defined $add;
+	my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time + $add); $year += 1900;
+	my @months = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+	my $date = "$year $mday $months[$mon] $hour:$min:$sec";
+	return($date);
+}
+
+sub max {
+	my (@arr) = @_;
+	die "array broken:\n" . join("\n", @arr) . "\nEND\n\n" if not defined $arr[1];
+	@arr = sort {$b <=> $a} @arr;
+	return($arr[0]);
+}
+sub min {
+	my (@arr) = @_;
+	die "array broken:\n" . join("\n", @arr) . "\nEND\n\n" if not defined $arr[1];
+	@arr = sort {$a <=> $b} @arr;
+	return($arr[0]);
+}
+
+
+sub LOG {
+   my ($outLog, $text, $STEP, $STEPCOUNT) = @_;
+	if (not defined $STEP) {
+      print $text;
+   }
+   if (defined $outLog) {
+      print $outLog $text;
+   }
+}
+
+sub getFilename {
+   my ($fh, $type) = @_;
+   my $fh0 = $fh;
+   $fh =~ s/\/+/\//g;
+   my ($first, $last) = (0,0);
+   if ($fh =~ /^\//) {
+      $first = 1;
+      $fh =~ s/^\///;
+   }
+   if ($fh =~ /\/$/) {
+      $last = 1;
+      $fh =~ s/\/$//;
+   }
+   # Split folder and fullname
+   my (@splitname) = split("\/+", $fh);
+   my $fullname = pop(@splitname);
+   my @tempfolder = @splitname;
+   my $folder;
+   if (@tempfolder == 0) {
+      $folder = "./";
+   }
+   else {
+      $folder = join("\/", @tempfolder) . "/";
+   }
+   #$folder = "./" if $folder eq "/";
+#  print "\nFolder = $folder\nFile = $fh, fullname=$fullname\n\n";
+   # Split fullname and shortname (dot separated)
+        @splitname = split(/\./, $fullname);
+        my $shortname = $splitname[0];
+   if ($first == 1) {$folder = "/$folder";}
+   if ($last == 1) {$fullname = "$fullname/";}
+   #print "\nFh=$fh0\nFolder=$folder\nShortname=$shortname\nFullname=$fullname\n\n";
+#     print "Retunring shortname\n" if not defined $type;
+
+        return($shortname)          if not defined($type);
+        return($folder, $fullname)     if defined($type) and $type =~ /folderfull/;
+        return($folder, $shortname)    if defined($type) and $type =~ /folder/;
+        return($fullname)        if defined($type) and $type =~ /full/;
+        return($folder, $fullname, $shortname)  if defined($type) and $type =~ /all/;
+}
+
+sub revcomp {
+   my ($sequence) = @_;
+   $sequence = uc($sequence);
+   $sequence =~ tr/ATGC/TACG/;
+   $sequence = reverse($sequence);
+   return ($sequence);
 }
 
